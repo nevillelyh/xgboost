@@ -120,7 +120,7 @@ public class RabitTracker {
     }
   }
 
-  private void stop() {
+  public void stop() {
     if (trackerProcess.get() != null) {
       trackerProcess.get().destroy();
     }
