@@ -61,7 +61,7 @@ object XGBoost extends Serializable {
       .map { case ((id, trainingSamples), env) =>
         if (id == nWorkers) {
           // master node
-          logger.info("Starting XGBoost master")
+          logger.info("Starting XGBoost master" + " " + Thread.currentThread().toString)
           val tracker = new RabitTracker(nWorkers)
           require(tracker.start(), "Failed to start tracker")
           val returnVal = tracker.waitFor()
@@ -73,10 +73,11 @@ object XGBoost extends Serializable {
           }
         } else {
           // worker node
-          logger.info("Starting XGBoost worker " + id)
+          logger.info("Starting XGBoost worker " + id + " " + Thread.currentThread().toString)
           val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
           Rabit.init(initEnv.asJava)
           val iter = trainingSamples.iterator
+//          val iter = readFile(path + "/agaricus.txt.train").iterator
           if (iter.hasNext) {
             val cacheFileName: String = if (useExternalMemory) {
               s"xgboost-dtrain-cache-$id"
@@ -84,6 +85,7 @@ object XGBoost extends Serializable {
               null
             }
             val trainingSet = new DMatrix(iter, cacheFileName)
+//            val trainingSet = new DMatrix(path + "/agaricus.txt.train")
             println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
             val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round, obj = obj, eval = eval)
             Rabit.shutdown()
@@ -108,7 +110,8 @@ object XGBoost extends Serializable {
 
   def main(args: Array[String]): Unit = {
     runScio
-    runLocal
+//    runLocal
+//    runParallel
   }
 
   private val path = "/Users/neville/src/gcp/xgboost/demo/data"
@@ -145,6 +148,31 @@ object XGBoost extends Serializable {
     println(testMat.getLabel.zip(result.map(_.head))
       .map(p => math.pow(p._1 - p._2, 2.0)).sum / result.length)
   }
+
+  private def runParallel: Unit = {
+    val trainMat = new DMatrix(path + "/agaricus.txt.train")
+    val testMat = new DMatrix(path + "/agaricus.txt.test")
+
+    val tracker = new RabitTracker(1)
+    tracker.start()
+    val env = tracker.getWorkerEnvs.asScala
+
+    var booster: Booster = null
+    new Thread() {
+      override def run(): Unit = {
+        Rabit.init((env + ("DMLC_TASK_ID" -> "0")).asJava)
+        booster = SXGBoost.train(trainMat, paramMap, 5)
+        Rabit.shutdown()
+      }
+    }.run()
+    println(tracker.waitFor())
+    val result = booster.predict(testMat)
+    booster.getModelDump().foreach(println)
+    testMat.getLabel.zip(result.map(_.head)).take(20).foreach(println)
+    println(testMat.getLabel.zip(result.map(_.head))
+      .map(p => math.pow(p._1 - p._2, 2.0)).sum / result.length)
+  }
+
   private def readFile(filePath: String): List[LabeledPoint] = {
     val file = Source.fromFile(new File(filePath))
     val sampleList = new ListBuffer[LabeledPoint]
@@ -153,6 +181,7 @@ object XGBoost extends Serializable {
     }
     sampleList.toList
   }
+
   private def fromSVMStringToLabeledPoint(line: String): LabeledPoint = {
     val labelAndFeatures = line.split(" ")
     val label = labelAndFeatures(0).toFloat
