@@ -28,7 +28,6 @@ import ml.dmlc.xgboost4j.scala.{XGBoost => SXGBoost, _}
 import org.apache.commons.logging.LogFactory
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.io.Source
 import scala.util.Random
@@ -36,110 +35,116 @@ import scala.util.Random
 object XGBoost extends Serializable {
   private val logger = LogFactory.getLog("XGBoostScio")
 
-  def train(trainingData: SCollection[LabeledPoint],
-            configMap: Map[String, Any], round: Int, nWorkers: Int,
-            obj: ObjectiveTrait = null, eval: EvalTrait = null,
-            useExternalMemory: Boolean = false): SCollection[Array[Byte]] = {
-    val sc = trainingData.context
-//    val opts = sc.optionsAs[DataflowPipelineOptions]
-//    require(
-//      opts.getAutoscalingAlgorithm == AutoscalingAlgorithmType.NONE,
-//      "XGBoost can not be used with autoscaling")
-//    val nWorkers = opts.getNumWorkers
+  def train(trainingData: SCollection[LabeledPoint], configMap: Map[String, Any],
+            round: Int, nWorkers: Int, obj: ObjectiveTrait = null, eval: EvalTrait = null,
+            useExternalMemory: Boolean = false): SCollection[Booster] = {
     require(nWorkers > 0, "nWorkers must be greater than 0")
     val xgBoostConfMap = configMap + ("nthread" -> 1)
 
+    val sc = trainingData.context
     val rabitEnv = sc.parallelize(Seq(nWorkers))
       .map { n =>
-        logger.info("========== Loading worker environment")
+        logger.info("Loading XGBoost worker environment")
         val tracker = new RabitTracker(n)
         require(tracker.start(), "Failed to start tracker")
         val env = tracker.getWorkerEnvs.asScala
         tracker.stop()
-        logger.info("========== Worker environement: " + env)
+        logger.info(env)
         env
       }
 
     trainingData
       .map((Random.nextInt(nWorkers), _))
-      .groupByKey  // id, trainingSamples
-      .union(sc.parallelize(Seq((nWorkers, Iterable.empty))))
+      .union(sc.parallelize(Seq((nWorkers, LabeledPoint.fromDenseVector(0f, Array(0f))))))
+      .groupByKey
       .cross(rabitEnv)
       .map { case ((id, trainingSamples), env) =>
         if (id == nWorkers) {
           // master node
-          logger.info("========== Starting master")
+          logger.info("Starting XGBoost master")
           val tracker = new RabitTracker(nWorkers)
           require(tracker.start(), "Failed to start tracker")
           val returnVal = tracker.waitFor()
+          logger.info("Stopping XGBoost master")
           if (returnVal == 0) {
             Array.emptyByteArray
           } else {
-            logger.info("========== XGBoostModel training failed " + returnVal)
             throw new XGBoostError("XGBoostModel training failed")
           }
         } else {
           // worker node
+          logger.info("Starting XGBoost worker " + id)
           val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
-          logger.info("========== Starting worker " + id + " " + initEnv)
           Rabit.init(initEnv.asJava)
           val iter = trainingSamples.iterator
           if (iter.hasNext) {
-            logger.info("========== Starting training on worker " + id)
             val cacheFileName: String = if (useExternalMemory) {
               s"xgboost-dtrain-cache-$id"
             } else {
               null
             }
             val trainingSet = new DMatrix(iter, cacheFileName)
-            val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round,
-              watches = new mutable.HashMap[String, DMatrix] {
-                put("train", trainingSet)
-              }.toMap, obj, eval)
+            println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
+            val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round, obj = obj, eval = eval)
             Rabit.shutdown()
-            logger.info("========== Training on worker " + id + " done " + booster)
+            logger.info("Stopping XGBoost worker " + id)
+
+            // FIXME: figure out why Booster doesn't serialize properly
             val bos = new ByteArrayOutputStream()
             booster.saveModel(bos)
+            booster.getModelDump().foreach(println)
             bos.toByteArray
           } else {
-            logger.info("========== Empty bundle in training dataset")
             Rabit.shutdown()
-            throw new XGBoostError("Empty bundle in training dataset")
+            throw new XGBoostError("Empty bundle in training data")
           }
         }
       }
       .filter(_.nonEmpty)
       .reduce((x, y) => x)
+      // FIXME: figure out why Booster doesn't serialize properly
+      .map(bytes => SXGBoost.loadModel(new ByteArrayInputStream(bytes)))
   }
 
   def main(args: Array[String]): Unit = {
-    val tracker = new RabitTracker(10)
-    tracker.start()
-    tracker.getWorkerEnvs.asScala.foreach(println)
-    tracker.stop()
-
-    runXGBoost
+    runScio
+    runLocal
   }
 
-  def runXGBoost: Unit = {
+  private val path = "/Users/neville/src/gcp/xgboost/demo/data"
+  private val paramMap = Map(
+    "eta" -> "1", "max_depth" -> "2", "silent" -> "0", "objective" -> "binary:logistic")
+
+  private def runScio: Unit = {
     val p = PipelineOptionsFactory.create()
     p.setRunner(classOf[InProcessPipelineRunner])
     val sc = ScioContext(p)
 
-    val path = "/Users/neville/src/gcp/xgboost/demo/data"
     val trainingSet = readFile(path + "/agaricus.txt.train")
     val trainingData = sc.parallelize(trainingSet)
-    val paramMap = Map("eta" -> "1", "max_depth" -> "2", "silent" -> "0",
-      "objective" -> "binary:logistic")
-    val f = XGBoost.train(trainingData, paramMap, 5, 2).materialize
+    val f = XGBoost.train(trainingData, paramMap, 10, 1).materialize
     sc.close()
+    val booster = f.waitForResult().value.next()
 
-    logger.info("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-    val bytes = f.waitForResult().value.next()
-    val booster = SXGBoost.loadModel(new ByteArrayInputStream(bytes))
+    val testMat = new DMatrix(path + "/agaricus.txt.test")
+    val result = booster.predict(testMat)
     booster.getModelDump().foreach(println)
+    testMat.getLabel.zip(result.map(_.head)).take(20).foreach(println)
+    println(testMat.getLabel.zip(result.map(_.head))
+      .map(p => math.pow(p._1 - p._2, 2.0)).sum / result.length)
   }
 
+  private def runLocal: Unit = {
+    val trainMat = new DMatrix(path + "/agaricus.txt.train")
+    val testMat = new DMatrix(path + "/agaricus.txt.test")
+    val booster = SXGBoost.train(trainMat, paramMap, 5)
+
+    val result = booster.predict(testMat)
+    booster.getModelDump().foreach(println)
+    testMat.getLabel.zip(result.map(_.head)).take(20).foreach(println)
+    println(testMat.getLabel.zip(result.map(_.head))
+      .map(p => math.pow(p._1 - p._2, 2.0)).sum / result.length)
+  }
   private def readFile(filePath: String): List[LabeledPoint] = {
     val file = Source.fromFile(new File(filePath))
     val sampleList = new ListBuffer[LabeledPoint]
