@@ -191,6 +191,8 @@ object XGBoost extends Serializable {
       val idAndValue = feature.split(":")
       denseFeature(idAndValue(0).toInt) = idAndValue(1).toFloat
     }
-    LabeledPoint.fromDenseVector(label, denseFeature)
+    val p = LabeledPoint.fromDenseVector(label, denseFeature)
+    p.indices = Array[Int](0)
+    p
   }
 }
