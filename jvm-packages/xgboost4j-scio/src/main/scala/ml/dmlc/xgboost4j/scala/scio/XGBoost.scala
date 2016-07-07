@@ -126,7 +126,7 @@ object XGBoost extends Serializable {
     p.setRunner(classOf[InProcessPipelineRunner])
     val sc = ScioContext(p)
 
-    val path = "/Users/neville/src/gcp/xgboost/jvm-packages/xgboost4j-spark/src/test/resources"
+    val path = "/Users/neville/src/gcp/xgboost/demo/data"
     val trainingSet = readFile(path + "/agaricus.txt.train")
     val trainingData = sc.parallelize(trainingSet)
     val paramMap = Map("eta" -> "1", "max_depth" -> "2", "silent" -> "0",
