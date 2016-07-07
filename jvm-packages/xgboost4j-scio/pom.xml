@@ -29,7 +29,23 @@
         <dependency>
             <groupId>com.spotify</groupId>
             <artifactId>scio-core_${scala.binary.version}</artifactId>
-            <version>0.1.9</version>
+            <version>0.1.10-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.spotify</groupId>
+            <artifactId>scio-test_${scala.binary.version}</artifactId>
+            <version>0.1.10-SNAPSHOT</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
+    <repositories>
+        <repository>
+            <id>oss-sonatype</id>
+            <name>oss-sonatype</name>
+            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 </project>
