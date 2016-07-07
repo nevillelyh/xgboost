@@ -115,8 +115,8 @@ object XGBoost extends Serializable {
   }
 
   def main(args: Array[String]): Unit = {
-    runScio
-//    runLocal
+//    runScio
+    runLocal
 //    runParallel
   }
 
@@ -144,7 +144,8 @@ object XGBoost extends Serializable {
   }
 
   private def runLocal: Unit = {
-    val trainMat = new DMatrix(path + "/agaricus.txt.train")
+//    val trainMat = new DMatrix(path + "/agaricus.txt.train")
+    val trainMat = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
     val testMat = new DMatrix(path + "/agaricus.txt.test")
     val booster = SXGBoost.train(trainMat, paramMap, 10)
 
@@ -167,7 +168,9 @@ object XGBoost extends Serializable {
     new Thread() {
       override def run(): Unit = {
         Rabit.init((env + ("DMLC_TASK_ID" -> "0")).asJava)
-        booster = SXGBoost.train(trainMat, paramMap, 10)
+        val mat = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
+        booster = SXGBoost.train(mat, paramMap, 10)
+//        booster = SXGBoost.train(trainMat, paramMap, 10)
         Rabit.shutdown()
       }
     }.run()
