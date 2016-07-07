@@ -76,6 +76,7 @@ object XGBoost extends Serializable {
           logger.info("Starting XGBoost worker " + id + " " + Thread.currentThread().toString)
           val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
           Rabit.init(initEnv.asJava)
+
           val iter = trainingSamples.iterator
 //          val iter = readFile(path + "/agaricus.txt.train").iterator
           if (iter.hasNext) {
@@ -85,6 +86,7 @@ object XGBoost extends Serializable {
               null
             }
             val trainingSet = new DMatrix(iter, cacheFileName)
+//            val trainingSet = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
 //            val trainingSet = new DMatrix(path + "/agaricus.txt.train")
             println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
             val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round, obj = obj, eval = eval)
@@ -191,8 +193,6 @@ object XGBoost extends Serializable {
       val idAndValue = feature.split(":")
       denseFeature(idAndValue(0).toInt) = idAndValue(1).toFloat
     }
-    val p = LabeledPoint.fromDenseVector(label, denseFeature)
-    p.indices = Array[Int](0)
-    p
+    LabeledPoint.fromDenseVector(label, denseFeature)
   }
 }
