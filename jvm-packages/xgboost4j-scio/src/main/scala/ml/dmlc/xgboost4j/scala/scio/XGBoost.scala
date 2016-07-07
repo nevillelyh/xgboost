@@ -85,7 +85,12 @@ object XGBoost extends Serializable {
             } else {
               null
             }
-            val trainingSet = new DMatrix(iter, cacheFileName)
+            val trainingSet = new DMatrix(
+              trainingSamples.flatMap(_.values).toArray,
+              trainingSamples.size,
+              trainingSamples.head.values.length)
+            trainingSet.setLabel(trainingSamples.map(_.label).toArray)
+//            val trainingSet = new DMatrix(iter, cacheFileName)
 //            val trainingSet = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
 //            val trainingSet = new DMatrix(path + "/agaricus.txt.train")
             println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
