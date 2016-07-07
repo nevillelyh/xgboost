@@ -14,7 +14,7 @@
  limitations under the License.
  */
 
-package com.spotify.scio.xgboost
+package ml.dmlc.xgboost4j.scala.scio
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, File}
 
@@ -113,16 +113,20 @@ object XGBoost extends Serializable {
   }
 
   def main(args: Array[String]): Unit = {
-//    val tracker = new RabitTracker(10)
-//    tracker.start()
-//    tracker.getWorkerEnvs.asScala.foreach(println)
-//    tracker.stop()
+    val tracker = new RabitTracker(10)
+    tracker.start()
+    tracker.getWorkerEnvs.asScala.foreach(println)
+    tracker.stop()
 
+    runXGBoost
+  }
+
+  def runXGBoost: Unit = {
     val p = PipelineOptionsFactory.create()
     p.setRunner(classOf[InProcessPipelineRunner])
     val sc = ScioContext(p)
 
-    val path = "/home/neville/src/gcp/xgboost/jvm-packages/xgboost4j-spark/src/test/resources"
+    val path = "/Users/neville/src/gcp/xgboost/jvm-packages/xgboost4j-spark/src/test/resources"
     val trainingSet = readFile(path + "/agaricus.txt.train")
     val trainingData = sc.parallelize(trainingSet)
     val paramMap = Map("eta" -> "1", "max_depth" -> "2", "silent" -> "0",
