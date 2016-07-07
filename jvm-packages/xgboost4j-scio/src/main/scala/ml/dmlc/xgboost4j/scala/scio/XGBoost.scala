@@ -16,7 +16,7 @@
 
 package ml.dmlc.xgboost4j.scala.scio
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, File}
+import java.io.{ByteArrayInputStream, File}
 
 import com.google.cloud.dataflow.sdk.options.PipelineOptionsFactory
 import com.google.cloud.dataflow.sdk.runners.inprocess.InProcessPipelineRunner
@@ -91,18 +91,17 @@ object XGBoost extends Serializable {
               trainingSamples.head.values.length)
             trainingSet.setLabel(trainingSamples.map(_.label).toArray)
 //            val trainingSet = new DMatrix(iter, cacheFileName)
+
 //            val trainingSet = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
 //            val trainingSet = new DMatrix(path + "/agaricus.txt.train")
             println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
             val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round, obj = obj, eval = eval)
+            booster.getModelDump().foreach(println)
             Rabit.shutdown()
             logger.info("Stopping XGBoost worker " + id)
 
             // FIXME: figure out why Booster doesn't serialize properly
-            val bos = new ByteArrayOutputStream()
-            booster.saveModel(bos)
-            booster.getModelDump().foreach(println)
-            bos.toByteArray
+            booster.toByteArray
           } else {
             Rabit.shutdown()
             throw new XGBoostError("Empty bundle in training data")
@@ -121,7 +120,7 @@ object XGBoost extends Serializable {
 //    runParallel
   }
 
-  private val path = "/Users/neville/src/gcp/xgboost/demo/data"
+  private val path = System.getProperty("user.home") + "/src/gcp/xgboost/demo/data"
   private val paramMap = Map(
     "eta" -> "1", "max_depth" -> "2", "silent" -> "0", "objective" -> "binary:logistic")
 
@@ -147,7 +146,7 @@ object XGBoost extends Serializable {
   private def runLocal: Unit = {
     val trainMat = new DMatrix(path + "/agaricus.txt.train")
     val testMat = new DMatrix(path + "/agaricus.txt.test")
-    val booster = SXGBoost.train(trainMat, paramMap, 5)
+    val booster = SXGBoost.train(trainMat, paramMap, 10)
 
     val result = booster.predict(testMat)
     booster.getModelDump().foreach(println)
@@ -168,7 +167,7 @@ object XGBoost extends Serializable {
     new Thread() {
       override def run(): Unit = {
         Rabit.init((env + ("DMLC_TASK_ID" -> "0")).asJava)
-        booster = SXGBoost.train(trainMat, paramMap, 5)
+        booster = SXGBoost.train(trainMat, paramMap, 10)
         Rabit.shutdown()
       }
     }.run()
