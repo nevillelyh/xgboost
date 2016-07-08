@@ -37,7 +37,7 @@ object DebugMat {
     // val trainMat = new DMatrix(path + "/agaricus.txt.train")
 
     // This does not
-    val trainMat = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
+    // val trainMat = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
 
     val testMat = new DMatrix(path + "/agaricus.txt.test")
 
@@ -49,7 +49,9 @@ object DebugMat {
     new Thread() {
       override def run(): Unit = {
         Rabit.init((env + ("DMLC_TASK_ID" -> "0")).asJava)
-        booster = SXGBoost.train(trainMat, paramMap, 10)
+//        val trainMat = new DMatrix(path + "/agaricus.txt.train")
+        val trainMat = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
+        booster = SXGBoost.train(trainMat, paramMap, 10, Map("train" -> trainMat))
         Rabit.shutdown()
       }
     }.run()

@@ -35,6 +35,7 @@ import scala.util.Random
 object XGBoost extends Serializable {
   private val logger = LogFactory.getLog("XGBoostScio")
 
+  @throws(classOf[XGBoostError])
   def train(trainingData: SCollection[LabeledPoint], configMap: Map[String, Any],
             round: Int, nWorkers: Int, obj: ObjectiveTrait = null, eval: EvalTrait = null,
             useExternalMemory: Boolean = false): SCollection[Booster] = {
@@ -61,11 +62,11 @@ object XGBoost extends Serializable {
       .map { case ((id, trainingSamples), env) =>
         if (id == nWorkers) {
           // master node
-          logger.info("Starting XGBoost master" + " " + Thread.currentThread().toString)
+          logger.info("Starting XGBoost tracker")
           val tracker = new RabitTracker(nWorkers)
           require(tracker.start(), "Failed to start tracker")
           val returnVal = tracker.waitFor()
-          logger.info("Stopping XGBoost master")
+          logger.info("Stopping XGBoost tracker")
           if (returnVal == 0) {
             Array.emptyByteArray
           } else {
@@ -73,30 +74,22 @@ object XGBoost extends Serializable {
           }
         } else {
           // worker node
-          logger.info("Starting XGBoost worker " + id + " " + Thread.currentThread().toString)
+          logger.info("Starting XGBoost worker")
           val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
           Rabit.init(initEnv.asJava)
 
           val iter = trainingSamples.iterator
-//          val iter = readFile(path + "/agaricus.txt.train").iterator
           if (iter.hasNext) {
             val cacheFileName: String = if (useExternalMemory) {
               s"xgboost-dtrain-cache-$id"
             } else {
               null
             }
-            val trainingSet = new DMatrix(
-              trainingSamples.flatMap(_.values).toArray,
-              trainingSamples.size,
-              trainingSamples.head.values.length)
-            trainingSet.setLabel(trainingSamples.map(_.label).toArray)
-//            val trainingSet = new DMatrix(iter, cacheFileName)
-
-//            val trainingSet = new DMatrix(readFile(path + "/agaricus.txt.train").iterator)
-//            val trainingSet = new DMatrix(path + "/agaricus.txt.train")
-            println(s"$xgBoostConfMap\t$round\t$nWorkers\t${Rabit.getRank}")
-            val booster = SXGBoost.train(trainingSet, xgBoostConfMap, round, obj = obj, eval = eval)
-            booster.getModelDump().foreach(println)
+            val trainingSet = makeMatrix(trainingSamples)
+            val booster = SXGBoost.train(
+              trainingSet, xgBoostConfMap, round,
+              Map("train" -> trainingSet),
+              obj = obj, eval = eval)
             Rabit.shutdown()
             logger.info("Stopping XGBoost worker " + id)
 
@@ -114,9 +107,22 @@ object XGBoost extends Serializable {
       .map(bytes => SXGBoost.loadModel(new ByteArrayInputStream(bytes)))
   }
 
+  private def makeMatrix(data: Iterable[LabeledPoint]): DMatrix = {
+    val labels = ListBuffer.empty[Float]
+    val values = ListBuffer.empty[Array[Float]]
+    data.foreach { p =>
+      labels.append(p.label)
+      values.append(p.values)
+    }
+    // FIXME: figure out why Iterator[LabeledPoint] doesn't work
+    val m = new DMatrix(values.toArray.flatten, values.size, values.head.length)
+    m.setLabel(labels.toArray)
+    m
+  }
+
   def main(args: Array[String]): Unit = {
-//    runScio
-    runLocal
+    runScio
+//    runLocal
 //    runParallel
   }
 
