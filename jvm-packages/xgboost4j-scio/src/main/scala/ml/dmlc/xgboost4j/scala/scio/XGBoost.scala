@@ -110,7 +110,9 @@ object XGBoost extends Serializable {
   private def makeMatrix(data: Iterable[LabeledPoint]): DMatrix = {
     val labels = ListBuffer.empty[Float]
     val values = ListBuffer.empty[Array[Float]]
-    data.foreach { p =>
+    val iter = data.iterator
+    while (iter.hasNext) {
+      val p = iter.next()
       labels.append(p.label)
       values.append(p.values)
     }
