@@ -45,6 +45,8 @@ object XGBoost extends Serializable {
     val sc = trainingData.context
     val rabitEnv = sc.parallelize(Seq(nWorkers))
       .map { n =>
+        installPackages()
+
         logger.info("Loading XGBoost worker environment")
         val tracker = new RabitTracker(n)
         require(tracker.start(), "Failed to start tracker")
@@ -60,6 +62,8 @@ object XGBoost extends Serializable {
       .groupByKey
       .cross(rabitEnv)
       .map { case ((id, trainingSamples), env) =>
+        installPackages()
+
         if (id == nWorkers) {
           // master node
           logger.info("Starting XGBoost tracker")
@@ -107,6 +111,20 @@ object XGBoost extends Serializable {
       .map(bytes => SXGBoost.loadModel(new ByteArrayInputStream(bytes)))
   }
 
+  private def installPackages(): Unit = {
+    logger.info("Installing Debian packages")
+    exec("apt-get update")
+    exec("apt-get install -y python libgomp1")
+  }
+
+  private def exec(cmd: String): Unit = {
+    val p = Runtime.getRuntime.exec("apt-get update")
+    if (p.waitFor() != 0) {
+      logger.error(Source.fromInputStream(p.getErrorStream).getLines().mkString("\n"))
+      logger.error(Source.fromInputStream(p.getInputStream).getLines().mkString("\n"))
+    }
+  }
+
   private def makeMatrix(data: Iterable[LabeledPoint]): DMatrix = {
     val labels = ListBuffer.empty[Float]
     val values = ListBuffer.empty[Array[Float]]
@@ -123,7 +141,7 @@ object XGBoost extends Serializable {
   }
 
   def main(args: Array[String]): Unit = {
-    runScio
+    runScio(args)
 //    runLocal
 //    runParallel
   }
@@ -132,14 +150,19 @@ object XGBoost extends Serializable {
   private val paramMap = Map(
     "eta" -> "1", "max_depth" -> "2", "silent" -> "0", "objective" -> "binary:logistic")
 
-  private def runScio: Unit = {
-    val p = PipelineOptionsFactory.create()
-    p.setRunner(classOf[InProcessPipelineRunner])
-    val sc = ScioContext(p)
+  private def runScio(cmdlineArgs: Array[String]): Unit = {
+//    val p = PipelineOptionsFactory.create()
+//    p.setRunner(classOf[InProcessPipelineRunner])
+//    val sc = ScioContext()
+//    val trainingSet = readFile(path + "/agaricus.txt.train")
+//    val trainingData = sc.parallelize(trainingSet)
 
-    val trainingSet = readFile(path + "/agaricus.txt.train")
-    val trainingData = sc.parallelize(trainingSet)
-    val f = XGBoost.train(trainingData, paramMap, 10, 1).materialize
+    val (sc, args) = ContextAndArgs(cmdlineArgs)
+    val trainingData = sc
+      .textFile("gs://neville-steel-eu/xgboost/agaricus.txt.train")
+      .map(fromSVMStringToLabeledPoint)
+
+    val f = XGBoost.train(trainingData, paramMap, 10, 2).materialize
     sc.close()
     val booster = f.waitForResult().value.next()
 
