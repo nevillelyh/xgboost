@@ -55,6 +55,7 @@ object DebugMat {
         Rabit.shutdown()
       }
     }.run()
+
     println(tracker.waitFor())
     val result = booster.predict(testMat)
     booster.getModelDump().foreach(println)

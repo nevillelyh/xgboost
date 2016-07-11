@@ -58,52 +58,63 @@ object XGBoost extends Serializable {
 
     trainingData
       .map((Random.nextInt(nWorkers), _))
-      .union(sc.parallelize(Seq((nWorkers, LabeledPoint.fromDenseVector(0f, Array(0f))))))
+      // .union(sc.parallelize(Seq((nWorkers, LabeledPoint.fromDenseVector(0f, Array(0f))))))
       .groupByKey
       .cross(rabitEnv)
       .map { case ((id, trainingSamples), env) =>
         installPackages()
 
-        if (id == nWorkers) {
-          // master node
-          logger.info("Starting XGBoost tracker")
-          val tracker = new RabitTracker(nWorkers)
-          require(tracker.start(), "Failed to start tracker")
-          val returnVal = tracker.waitFor()
-          logger.info("Stopping XGBoost tracker")
-          if (returnVal == 0) {
-            Array.emptyByteArray
+        // ====================
+        // master node
+        // ====================
+
+        logger.info("Starting XGBoost tracker")
+        val tracker = new RabitTracker(nWorkers)
+        require(tracker.start(), "Failed to start tracker")
+        val newEnv = tracker.getWorkerEnvs.asScala
+        val isMaster = newEnv("DMLC_TRACKER_URI") == env("DMLC_TRACKER_URI") &&
+          newEnv("DMLC_TRACKER_PORT") == env("DMLC_TRACKER_PORT")
+        if (!isMaster) {
+          tracker.stop()
+        }
+
+        // ====================
+        // worker node
+        // ====================
+
+        logger.info("Starting XGBoost worker")
+        val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
+        Rabit.init(initEnv.asJava)
+
+        val iter = trainingSamples.iterator
+        val boosterData = if (iter.hasNext) {
+          val cacheFileName: String = if (useExternalMemory) {
+            s"xgboost-dtrain-cache-$id"
           } else {
+            null
+          }
+          val trainingSet = makeMatrix(trainingSamples)
+          val booster = SXGBoost.train(
+            trainingSet, xgBoostConfMap, round,
+            Map("train" -> trainingSet),
+            obj = obj, eval = eval)
+          Rabit.shutdown()
+          logger.info("Stopping XGBoost worker " + id)
+
+          // FIXME: figure out why Booster doesn't serialize properly
+          booster.toByteArray
+        } else {
+          Rabit.shutdown()
+          throw new XGBoostError("Empty bundle in training data")
+        }
+
+        if (isMaster) {
+          logger.info("Stopping XGBoost tracker")
+          if (tracker.waitFor() != 0) {
             throw new XGBoostError("XGBoostModel training failed")
           }
-        } else {
-          // worker node
-          logger.info("Starting XGBoost worker")
-          val initEnv = env + ("DMLC_TASK_ID" -> id.toString)
-          Rabit.init(initEnv.asJava)
-
-          val iter = trainingSamples.iterator
-          if (iter.hasNext) {
-            val cacheFileName: String = if (useExternalMemory) {
-              s"xgboost-dtrain-cache-$id"
-            } else {
-              null
-            }
-            val trainingSet = makeMatrix(trainingSamples)
-            val booster = SXGBoost.train(
-              trainingSet, xgBoostConfMap, round,
-              Map("train" -> trainingSet),
-              obj = obj, eval = eval)
-            Rabit.shutdown()
-            logger.info("Stopping XGBoost worker " + id)
-
-            // FIXME: figure out why Booster doesn't serialize properly
-            booster.toByteArray
-          } else {
-            Rabit.shutdown()
-            throw new XGBoostError("Empty bundle in training data")
-          }
         }
+        boosterData
       }
       .filter(_.nonEmpty)
       .reduce((x, y) => x)
@@ -118,7 +129,7 @@ object XGBoost extends Serializable {
   }
 
   private def exec(cmd: String): Unit = {
-    val p = Runtime.getRuntime.exec("apt-get update")
+    val p = Runtime.getRuntime.exec(cmd)
     if (p.waitFor() != 0) {
       logger.error(Source.fromInputStream(p.getErrorStream).getLines().mkString("\n"))
       logger.error(Source.fromInputStream(p.getInputStream).getLines().mkString("\n"))
